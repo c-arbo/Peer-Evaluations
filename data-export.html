@@ -1,0 +1,104 @@
+<html>
+<head>
+    <title>Peer Evaluation Data Manager</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.0.0-beta2/dist/css/bootstrap.min.css" rel="stylesheet">
+</head>
+<body>
+    <div class="container mt-5">
+        <h1>Peer Evaluation Data Manager</h1>
+        <p>Backup and restore data when MongoDB is unavailable.</p>
+
+        <div class="row">
+            <div class="col-md-6">
+                <h3>Export Data</h3>
+                <button class="btn btn-primary" onclick="exportData()">Download Backup JSON</button>
+            </div>
+            <div class="col-md-6">
+                <h3>Import Data</h3>
+                <input type="file" id="importFile" accept=".json" class="form-control">
+                <button class="btn btn-success mt-2" onclick="importData()">Upload Backup</button>
+            </div>
+        </div>
+
+        <div class="row mt-4">
+            <div class="col-md-12">
+                <h3>Current Data Summary</h3>
+                <div id="summary"></div>
+            </div>
+        </div>
+
+        <div class="row mt-4">
+            <div class="col-md-12">
+                <button class="btn btn-danger" onclick="clearData()">Clear All Local Data</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function saveToLocalStorage(key, data) {
+            localStorage.setItem('peer_eval_' + key, JSON.stringify(data));
+        }
+
+        function loadFromLocalStorage(key) {
+            const data = localStorage.getItem('peer_eval_' + key);
+            return data ? JSON.parse(data) : [];
+        }
+
+        function exportData() {
+            const data = {
+                scores: loadFromLocalStorage('scores'),
+                comments: loadFromLocalStorage('comments'),
+                exported: new Date().toISOString()
+            };
+            const blob = new Blob([JSON.stringify(data, null, 2)], {type: 'application/json'});
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `peer-evals-backup-${new Date().toISOString().slice(0,10)}.json`;
+            a.click();
+        }
+
+        function importData() {
+            const input = document.getElementById('importFile');
+            const file = input.files[0];
+            if (!file) {
+                alert('Please select a file first');
+                return;
+            }
+            const reader = new FileReader();
+            reader.onload = event => {
+                try {
+                    const data = JSON.parse(event.target.result);
+                    if(data.scores) saveToLocalStorage('scores', data.scores);
+                    if(data.comments) saveToLocalStorage('comments', data.comments);
+                    alert('Import successful!');
+                    updateSummary();
+                } catch (e) {
+                    alert('Import failed: ' + e.message);
+                }
+            };
+            reader.readAsText(file);
+        }
+
+        function clearData() {
+            if(confirm('Are you sure? This will delete all local data.')) {
+                localStorage.removeItem('peer_eval_scores');
+                localStorage.removeItem('peer_eval_comments');
+                updateSummary();
+                alert('Data cleared!');
+            }
+        }
+
+        function updateSummary() {
+            const scores = loadFromLocalStorage('scores');
+            const comments = loadFromLocalStorage('comments');
+            document.getElementById('summary').innerHTML = `
+                <p>Scores: ${scores.length} entries</p>
+                <p>Comments: ${comments.length} entries</p>
+            `;
+        }
+
+        updateSummary();
+    </script>
+</body>
+</html>
