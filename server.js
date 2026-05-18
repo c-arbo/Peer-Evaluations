@@ -1,65 +1,90 @@
-const express = require('express');
-const { MongoClient } = require('mongodb');
-const cors = require('cors');
-require('dotenv').config();
+const API_BASE = 'http://localhost:3000/api';
 
-const app = express();
-app.use(cors());
-app.use(express.json());
-app.use(express.static('.')); // Serve static files
+const tallyScoreHeader = `Class,Group,Student First Name,Student Last Name,Student Email,Student Score,Evaluation Submitted,Student Feedback (if provided)`;
+var tallyScoreCSV = tallyScoreHeader;
 
-const uri = process.env.MONGODB_URI;
-const client = new MongoClient(uri);
+(async () => {
+    // Get scores
+    const scoresResponse = await fetch(`${API_BASE}/scores`);
+    const scores = await scoresResponse.json();
 
-async function connectDB() {
-    try {
-        await client.connect();
-        console.log('Connected to MongoDB!');
-        return client.db('peer-evaluations');
-    } catch (err) {
-        console.error('Connection failed:', err);
-        process.exit(1);
-    }
-}
+    // Get comments
+    const commentsResponse = await fetch(`${API_BASE}/comments`);
+    const comments = await commentsResponse.json();
 
-// Get scores
-app.get('/api/scores', async (req, res) => {
-    const db = await connectDB();
-    const scores = await db.collection('scores').find({}).toArray();
-    res.json(scores);
-});
+    // Process scores for tally table
+    const tallyValues = scores.reduce((acc, s) => {
+        const key = `${s.student}-${s.class}-${s.group}`;
+        if (!acc[key]) {
+            acc[key] = { student: s.student, class: s.class, group: s.group, scores: [] };
+        }
+        acc[key].scores.push(s.score);
+        return acc;
+    }, {});
 
-// Get comments
-app.get('/api/comments', async (req, res) => {
-    const db = await connectDB();
-    const comments = await db.collection('comments').find({}).toArray();
-    res.json(comments);
-});
+    var tableBuffer = "";
+    Object.values(tallyValues).forEach(tallyValue => {
+        const avg = tallyValue.scores.length > 0 ? tallyValue.scores.reduce((a, b) => a + b, 0) / tallyValue.scores.length : 0;
+        const comment = comments.find(c => c.student === tallyValue.student && c.class === tallyValue.class) || { comment: "N/A" };
 
-// Submit scores
-app.post('/api/scores', async (req, res) => {
-    const db = await connectDB();
-    const scores = req.body.scores;
-    await db.collection('scores').insertMany(scores);
-    res.json({ success: true });
-});
+        tableBuffer += `
+            <tr>
+            <td>${tallyValue.class}</td>
+            <td>${tallyValue.group}</td>
+            <td>${tallyValue.student}</td>
+            <td>${avg.toFixed(2)}</td>
+            <td>Y</td>
+            <td>${comment.comment}</td>
+            </tr>`;
 
-// Submit comment
-app.post('/api/comments', async (req, res) => {
-    const db = await connectDB();
-    await db.collection('comments').insertOne(req.body);
-    res.json({ success: true });
-});
+        tallyScoreCSV += `\n"${tallyValue.class}","${tallyValue.group}","${tallyValue.student.split("@")[0].split("_")[0]}","${tallyValue.student.split("@")[0].split("_")[1]}","${tallyValue.student}",${avg.toFixed(2)},"Y","${comment.comment}"`;
+    });
+    document.getElementById("tally").innerHTML += `<tbody>${tableBuffer}</tbody>`;
 
-// Delete all data
-app.delete('/api/data', async (req, res) => {
-    const db = await connectDB();
-    await db.collection('scores').deleteMany({});
-    await db.collection('comments').deleteMany({});
-    res.json({ success: true });
-});
+    // Comments table
+    tableBuffer = "";
+    comments.forEach(c => {
+        tableBuffer += `
+            <tr>
+            <td>${c.class}</td>
+            <td>${c.group}</td>
+            <td>${c.reviewer}</td>
+            <td>${c.comment}</td>
+            </tr>`;
+    });
+    document.getElementById("feedback").innerHTML += `<tbody>${tableBuffer}</tbody>`;
 
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
-});
+    // Raw scores table
+    tableBuffer = "";
+    scores.forEach(s => {
+        tableBuffer += `
+            <tr>
+            <td>${s.class}</td>
+            <td>${s.group}</td>
+            <td>${s.student}</td>
+            <td>${s.reviewer}</td>
+            <td>${s.score}</td>
+            <td>${s._id ? new Date(s._id.getTimestamp()).toISOString() : new Date().toISOString()}</td>
+            </tr>`;
+    });
+    document.getElementById("raw").innerHTML += `<tbody>${tableBuffer}</tbody>`;
+
+    // Export buttons
+    const downloadlink = document.getElementById("req-scoring-overview");
+    downloadlink.href = URL.createObjectURL(new Blob([tallyScoreCSV], {type: "text/csv"}));
+    downloadlink.download = `PeerEvaluations-${(new Date()).toISOString()}.csv`;
+    downloadlink.hidden = false;
+
+    // Delete button
+    const deleteData = document.getElementById("delete-scoring-data");
+    deleteData.onclick = async () => {
+        await fetch(`${API_BASE}/data`, { method: 'DELETE' });
+        window.location.reload();
+    };
+    deleteData.hidden = false;
+
+    // Initialize DataTables
+    $('#tally').DataTable();
+    $('#feedback').DataTable();
+    $('#raw').DataTable();
+})();
